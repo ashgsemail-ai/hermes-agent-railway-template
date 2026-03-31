@@ -9,16 +9,25 @@ mkdir -p /data/.hermes/logs
 
 export PYTHONUNBUFFERED=1
 
-# Force all Python logging to also go to stdout so server.py can capture it
-cat > /tmp/_force_console_logging.py << 'PYEOF'
-import logging, sys
-_h = logging.StreamHandler(sys.stdout)
-_h.setLevel(logging.DEBUG)
-_h.setFormatter(logging.Formatter('%(asctime)s %(name)s %(levelname)s: %(message)s'))
-logging.getLogger().addHandler(_h)
-logging.getLogger().setLevel(logging.DEBUG)
-PYEOF
+# Create a hermes wrapper that dumps gateway.log on crash
+REAL_HERMES=$(which hermes)
+cat > /usr/local/bin/hermes-wrapper << WEOF
+#!/bin/bash
+$REAL_HERMES "\$@"
+EXIT_CODE=\$?
+if [ \$EXIT_CODE -ne 0 ] && [ "\$1" = "gateway" ]; then
+    echo "=== GATEWAY LOG FILE ==="
+    cat /data/.hermes/logs/gateway.log 2>/dev/null || echo "No gateway.log found"
+    echo "=== END GATEWAY LOG ==="
+    # Also dump runtime status
+    find /data/.hermes -name "gateway_status*.json" -exec cat {} \; 2>/dev/null || true
+fi
+exit \$EXIT_CODE
+WEOF
+chmod +x /usr/local/bin/hermes-wrapper
 
-export PYTHONPATH="/tmp:${PYTHONPATH}"
+# Replace hermes with our wrapper
+mv /usr/local/bin/hermes /usr/local/bin/hermes-real 2>/dev/null || true
+mv /usr/local/bin/hermes-wrapper /usr/local/bin/hermes
 
 exec python /app/server.py
