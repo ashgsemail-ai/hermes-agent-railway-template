@@ -9,6 +9,17 @@ mkdir -p /data/.hermes/logs
 
 export PYTHONUNBUFFERED=1
 
+# Debug: test Telegram token directly with curl
+echo "=== TELEGRAM TOKEN DEBUG ==="
+echo "Token length: ${#TELEGRAM_BOT_TOKEN}"
+echo "Token first 15 chars: ${TELEGRAM_BOT_TOKEN:0:15}"
+echo "Testing token with curl..."
+curl -s "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe" || echo "curl failed"
+echo ""
+echo "=== ENV FILE DEBUG ==="
+cat /data/.hermes/.env 2>/dev/null || echo "No .env file found"
+echo "=== END DEBUG ==="
+
 # Create a hermes wrapper that dumps gateway.log on crash
 REAL_HERMES=$(which hermes)
 cat > /usr/local/bin/hermes-wrapper << WEOF
@@ -19,7 +30,6 @@ if [ \$EXIT_CODE -ne 0 ] && [ "\$1" = "gateway" ]; then
     echo "=== GATEWAY LOG FILE ==="
     cat /data/.hermes/logs/gateway.log 2>/dev/null || echo "No gateway.log found"
     echo "=== END GATEWAY LOG ==="
-    # Also dump runtime status
     find /data/.hermes -name "gateway_status*.json" -exec cat {} \; 2>/dev/null || true
 fi
 exit \$EXIT_CODE
