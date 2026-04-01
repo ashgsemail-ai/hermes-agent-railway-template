@@ -20,6 +20,14 @@ echo "=== ENV FILE DEBUG ==="
 cat /data/.hermes/.env 2>/dev/null || echo "No .env file found"
 echo "=== END DEBUG ==="
 
+# PATCH: Disable fallback transport that causes 401 on Railway
+TELEGRAM_PY="/tmp/hermes-agent/gateway/platforms/telegram.py"
+if [ -f "$TELEGRAM_PY" ]; then
+    echo "=== PATCHING: Disabling Telegram fallback transport ==="
+    sed -i 's/if fallback_ips:/if False:  # PATCHED: fallback disabled/' "$TELEGRAM_PY"
+    echo "Patch applied"
+fi
+
 # Create a hermes wrapper that dumps gateway.log on crash
 REAL_HERMES=$(which hermes)
 cat > /usr/local/bin/hermes-wrapper << WEOF
