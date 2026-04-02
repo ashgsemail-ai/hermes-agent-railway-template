@@ -569,14 +569,13 @@ async def api_pairing_revoke(request: Request):
 async def auto_start_gateway():
     env_vars = read_env_file(ENV_FILE_PATH)
 
-    # Merge env vars from Railway/OS into the .env file.  Any key that is set
-    # in the process environment but missing (or empty) in the persisted .env
-    # gets written.  This runs on every boot so that adding a new env var in
-    # Railway takes effect without needing to manually enter it via the web UI.
+    # Merge env vars from Railway/OS into the .env file.  Railway env vars
+    # always take precedence over persisted .env values, so changes in
+    # Railway's dashboard take effect on the next deploy/restart.
     seeded_count = 0
     for key, _, _, _ in ENV_VAR_DEFS:
         val = os.environ.get(key)
-        if val and not env_vars.get(key):
+        if val and env_vars.get(key) != val:
             env_vars[key] = val
             seeded_count += 1
     if seeded_count:
