@@ -553,6 +553,20 @@ async def api_pairing_revoke(request: Request):
 
 async def auto_start_gateway():
     env_vars = read_env_file(ENV_FILE_PATH)
+
+    # On first boot, seed .env from Railway/OS env vars so users don't have
+    # to manually configure via the web UI if they set vars in Railway.
+    if not env_vars:
+        seeded = {}
+        for key, _, _, _ in ENV_VAR_DEFS:
+            val = os.environ.get(key)
+            if val:
+                seeded[key] = val
+        if seeded:
+            write_env_file(ENV_FILE_PATH, seeded)
+            env_vars = seeded
+            print(f"Seeded .env with {len(seeded)} vars from environment")
+
     has_provider = any(env_vars.get(key) for key in PROVIDER_KEYS)
     if has_provider:
         asyncio.create_task(gateway.start())
