@@ -222,11 +222,18 @@ class GatewayManager:
         if self.process and self.process.returncode is None:
             return
         self.state = "starting"
+        self.logs.append("Gateway starting...")
         try:
             env = os.environ.copy()
             env["HERMES_HOME"] = HERMES_HOME
             env_vars = read_env_file(ENV_FILE_PATH)
             env.update(env_vars)
+
+            # Log which provider/channel keys are configured (masked)
+            configured = [k for k in PROVIDER_KEYS if env.get(k)]
+            channels = [n for n, k in CHANNEL_KEYS.items() if env.get(k)]
+            self.logs.append(f"Providers: {configured or 'none'}")
+            self.logs.append(f"Channels: {channels or 'none'}")
 
             self.process = await asyncio.create_subprocess_exec(
                 "hermes", "gateway",
@@ -236,11 +243,13 @@ class GatewayManager:
             )
             self.state = "running"
             self.start_time = time.time()
+            self.logs.append(f"Gateway process started (pid={self.process.pid})")
             task = asyncio.create_task(self._read_output())
             self._read_tasks.append(task)
         except Exception as e:
             self.state = "error"
             self.logs.append(f"Failed to start gateway: {e}")
+            print(f"Failed to start gateway: {e}")
 
     async def stop(self):
         if not self.process or self.process.returncode is not None:
@@ -270,11 +279,17 @@ class GatewayManager:
                 decoded = line.decode("utf-8", errors="replace").rstrip()
                 cleaned = ANSI_ESCAPE.sub("", decoded)
                 self.logs.append(cleaned)
+                print(f"[gateway] {cleaned}")
         except asyncio.CancelledError:
             return
-        if self.process and self.process.returncode is not None and self.state == "running":
-            self.state = "error"
-            self.logs.append(f"Gateway exited with code {self.process.returncode}")
+        # Wait for process to finish and capture exit code
+        if self.process:
+            await self.process.wait()
+            if self.process.returncode is not None and self.state == "running":
+                self.state = "error"
+                msg = f"Gateway exited with code {self.process.returncode}"
+                self.logs.append(msg)
+                print(msg)
 
     def get_status(self) -> dict:
         pid = None
@@ -554,22 +569,33 @@ async def api_pairing_revoke(request: Request):
 async def auto_start_gateway():
     env_vars = read_env_file(ENV_FILE_PATH)
 
-    # On first boot, seed .env from Railway/OS env vars so users don't have
-    # to manually configure via the web UI if they set vars in Railway.
-    if not env_vars:
-        seeded = {}
-        for key, _, _, _ in ENV_VAR_DEFS:
-            val = os.environ.get(key)
-            if val:
-                seeded[key] = val
-        if seeded:
-            write_env_file(ENV_FILE_PATH, seeded)
-            env_vars = seeded
-            print(f"Seeded .env with {len(seeded)} vars from environment")
+    # Merge env vars from Railway/OS into the .env file.  Any key that is set
+    # in the process environment but missing (or empty) in the persisted .env
+    # gets written.  This runs on every boot so that adding a new env var in
+    # Railway takes effect without needing to manually enter it via the web UI.
+    seeded_count = 0
+    for key, _, _, _ in ENV_VAR_DEFS:
+        val = os.environ.get(key)
+        if val and not env_vars.get(key):
+            env_vars[key] = val
+            seeded_count += 1
+    if seeded_count:
+        write_env_file(ENV_FILE_PATH, env_vars)
+        print(f"Seeded .env with {seeded_count} new vars from environment")
+    else:
+        print(f"No new env vars to seed (.env has {len(env_vars)} vars)")
 
     has_provider = any(env_vars.get(key) for key in PROVIDER_KEYS)
+    has_channel = any(
+        env_vars.get(v) and env_vars.get(v, "").lower() not in ("false", "0", "no")
+        for v in CHANNEL_KEYS.values()
+    )
+    print(f"Auto-start check: has_provider={has_provider}, has_channel={has_channel}")
     if has_provider:
+        print("Starting gateway automatically...")
         asyncio.create_task(gateway.start())
+    else:
+        print("Skipping auto-start: no provider API key configured")
 
 
 routes = [
