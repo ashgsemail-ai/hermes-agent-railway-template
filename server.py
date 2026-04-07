@@ -37,6 +37,7 @@ if not ADMIN_PASSWORD:
 
 HERMES_HOME = os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))
 ENV_FILE_PATH = Path(HERMES_HOME) / ".env"
+CONFIG_YAML_PATH = Path(HERMES_HOME) / "config.yaml"
 PAIRING_DIR = Path(HERMES_HOME) / "pairing"
 CODE_TTL_SECONDS = 3600
 
@@ -156,6 +157,28 @@ def write_env_file(path: Path, env_vars: dict[str, str]):
         lines.append("")
 
     path.write_text("\n".join(lines) + "\n" if lines else "")
+
+
+def sync_model_to_config_yaml(model: str):
+    """Write the model to Hermes config.yaml, which is where the gateway reads it."""
+    if not model:
+        return
+    CONFIG_YAML_PATH.parent.mkdir(parents=True, exist_ok=True)
+    # Simple YAML write — just set the model key
+    # Preserve other lines if config.yaml already exists
+    lines = []
+    found = False
+    if CONFIG_YAML_PATH.exists():
+        for line in CONFIG_YAML_PATH.read_text().splitlines():
+            if line.startswith("model:"):
+                lines.append(f"model: {model}")
+                found = True
+            else:
+                lines.append(line)
+    if not found:
+        lines.append(f"model: {model}")
+    CONFIG_YAML_PATH.write_text("\n".join(lines) + "\n")
+    print(f"Wrote model '{model}' to {CONFIG_YAML_PATH}")
 
 
 def mask_secrets(env_vars: dict[str, str]) -> dict[str, str]:
@@ -356,6 +379,9 @@ async def api_config_put(request: Request):
                 if key not in merged:
                     merged[key] = value
             write_env_file(ENV_FILE_PATH, merged)
+            # Sync model to config.yaml where the gateway actually reads it
+            if merged.get("LLM_MODEL"):
+                sync_model_to_config_yaml(merged["LLM_MODEL"])
 
         if restart:
             asyncio.create_task(gateway.restart())
@@ -584,12 +610,17 @@ async def auto_start_gateway():
     else:
         print(f"No new env vars to seed (.env has {len(env_vars)} vars)")
 
+    # Sync model to config.yaml where the gateway actually reads it
+    model = env_vars.get("LLM_MODEL", "")
+    if model:
+        sync_model_to_config_yaml(model)
+
     has_provider = any(env_vars.get(key) for key in PROVIDER_KEYS)
     has_channel = any(
         env_vars.get(v) and env_vars.get(v, "").lower() not in ("false", "0", "no")
         for v in CHANNEL_KEYS.values()
     )
-    print(f"Auto-start check: has_provider={has_provider}, has_channel={has_channel}")
+    print(f"Auto-start check: has_provider={has_provider}, has_channel={has_channel}, model={model}")
     if has_provider:
         print("Starting gateway automatically...")
         asyncio.create_task(gateway.start())
