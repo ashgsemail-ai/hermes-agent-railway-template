@@ -46,6 +46,8 @@ CODE_TTL_SECONDS = 3600
 ENV_VAR_DEFS = [
     # Model
     ("LLM_MODEL", "Model", "model", False),
+    ("HERMES_MODEL", "Model (override)", "model", False),
+    ("HERMES_INFERENCE_PROVIDER", "Inference Provider", "model", False),
     # Providers
     ("OPENROUTER_API_KEY", "OpenRouter API Key", "provider", True),
     ("DEEPSEEK_API_KEY", "DeepSeek API Key", "provider", True),
@@ -610,8 +612,21 @@ async def auto_start_gateway():
     else:
         print(f"No new env vars to seed (.env has {len(env_vars)} vars)")
 
+    # Resolve model: HERMES_MODEL takes precedence over LLM_MODEL
+    model = env_vars.get("HERMES_MODEL") or env_vars.get("LLM_MODEL", "")
+
+    # Ensure HERMES_MODEL is set in .env (gateway checks it before LLM_MODEL)
+    if model and not env_vars.get("HERMES_MODEL"):
+        env_vars["HERMES_MODEL"] = model
+        write_env_file(ENV_FILE_PATH, env_vars)
+
+    # Auto-detect provider from model prefix or API key
+    if not env_vars.get("HERMES_INFERENCE_PROVIDER"):
+        if model.startswith("openrouter/") or env_vars.get("OPENROUTER_API_KEY"):
+            env_vars["HERMES_INFERENCE_PROVIDER"] = "openrouter"
+            write_env_file(ENV_FILE_PATH, env_vars)
+
     # Sync model to config.yaml where the gateway actually reads it
-    model = env_vars.get("LLM_MODEL", "")
     if model:
         sync_model_to_config_yaml(model)
 
