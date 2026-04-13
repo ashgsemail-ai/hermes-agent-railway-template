@@ -161,26 +161,42 @@ def write_env_file(path: Path, env_vars: dict[str, str]):
     path.write_text("\n".join(lines) + "\n" if lines else "")
 
 
-def sync_model_to_config_yaml(model: str):
-    """Write the model to Hermes config.yaml, which is where the gateway reads it."""
+def sync_model_to_config_yaml(model: str, provider: str = ""):
+    """Write the model to Hermes config.yaml, which is where the gateway reads it.
+
+    Uses the nested format that Hermes expects:
+        model:
+          provider: "openrouter"
+          default: "anthropic/claude-sonnet-4"
+    """
     if not model:
         return
     CONFIG_YAML_PATH.parent.mkdir(parents=True, exist_ok=True)
-    # Simple YAML write — just set the model key
-    # Preserve other lines if config.yaml already exists
-    lines = []
-    found = False
+
+    # Build the model block in nested YAML format
+    model_lines = [
+        "model:",
+        f'  default: "{model}"',
+    ]
+    if provider:
+        model_lines.insert(1, f'  provider: "{provider}"')
+
+    # Read existing config, strip old model block, insert new one
+    other_lines = []
     if CONFIG_YAML_PATH.exists():
+        skip = False
         for line in CONFIG_YAML_PATH.read_text().splitlines():
             if line.startswith("model:"):
-                lines.append(f"model: {model}")
-                found = True
-            else:
-                lines.append(line)
-    if not found:
-        lines.append(f"model: {model}")
-    CONFIG_YAML_PATH.write_text("\n".join(lines) + "\n")
-    print(f"Wrote model '{model}' to {CONFIG_YAML_PATH}")
+                skip = True
+                continue
+            if skip and (line.startswith("  ") or line.startswith("\t")):
+                continue
+            skip = False
+            other_lines.append(line)
+
+    all_lines = model_lines + other_lines
+    CONFIG_YAML_PATH.write_text("\n".join(all_lines) + "\n")
+    print(f"Wrote model config to {CONFIG_YAML_PATH}: provider={provider or 'auto'}, model={model}")
 
 
 def mask_secrets(env_vars: dict[str, str]) -> dict[str, str]:
@@ -382,8 +398,10 @@ async def api_config_put(request: Request):
                     merged[key] = value
             write_env_file(ENV_FILE_PATH, merged)
             # Sync model to config.yaml where the gateway actually reads it
-            if merged.get("LLM_MODEL"):
-                sync_model_to_config_yaml(merged["LLM_MODEL"])
+            m = merged.get("HERMES_MODEL") or merged.get("LLM_MODEL")
+            p = merged.get("HERMES_INFERENCE_PROVIDER", "")
+            if m:
+                sync_model_to_config_yaml(m, provider=p)
 
         if restart:
             asyncio.create_task(gateway.restart())
@@ -627,8 +645,9 @@ async def auto_start_gateway():
             write_env_file(ENV_FILE_PATH, env_vars)
 
     # Sync model to config.yaml where the gateway actually reads it
+    provider = env_vars.get("HERMES_INFERENCE_PROVIDER", "")
     if model:
-        sync_model_to_config_yaml(model)
+        sync_model_to_config_yaml(model, provider=provider)
 
     has_provider = any(env_vars.get(key) for key in PROVIDER_KEYS)
     has_channel = any(
