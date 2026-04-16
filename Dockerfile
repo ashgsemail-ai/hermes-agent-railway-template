@@ -43,7 +43,7 @@ RUN sed -i \
     grep -n "allow_origin" /opt/hermes/hermes_cli/web_server.py | head -5
 
 # Cache-bust: increment to force Railway to rebuild from this layer onward
-ARG CACHE_BUST=v7
+ARG CACHE_BUST=v8
 
 COPY scripts/entrypoint.sh /opt/hermes/scripts/entrypoint.sh
 RUN chmod +x /opt/hermes/scripts/entrypoint.sh

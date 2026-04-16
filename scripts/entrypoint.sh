@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Hermes Agent Railway Entrypoint — v0.9.0
 # Starts the Web Dashboard on Railway's public PORT and the gateway in background.
-# CACHE_BUST: 20260416-7
+# CACHE_BUST: 20260416-8
 set -euo pipefail
 
 export HERMES_HOME="${HERMES_HOME:-/data/.hermes}"
@@ -78,11 +78,11 @@ env | grep -E "^(OPENROUTER_API_KEY|TELEGRAM_BOT_TOKEN|TELEGRAM_ALLOWED_USERS|TE
 #
 # Key settings:
 #   - model.default: the model name passed to OpenRouter
-#   - model.provider: must be "openrouter" (not "auto") for arcee-ai/ models
+#   - model.provider: must be "openrouter" (not "auto") for google/ models
 #   - _config_version: 17 — matches DEFAULT_CONFIG version, prevents migration
 #     from running and potentially clearing our settings
 # ---------------------------------------------------------------------------
-_MODEL="${LLM_MODEL:-arcee-ai/trinity-large-thinking}"
+_MODEL="${LLM_MODEL:-google/gemini-2.5-flash}"
 _PROVIDER="${HERMES_INFERENCE_PROVIDER:-openrouter}"
 
 echo "[bootstrap] Writing config.yaml: model=${_MODEL}, provider=${_PROVIDER}"
