@@ -23,7 +23,9 @@ mkdir -p \
     "${HERMES_HOME}/hooks" \
     "${MESSAGING_CWD}"
 
-# Activate the venv
+# ---------------------------------------------------------------------------
+# Activate the venv FIRST — all subsequent python/hermes calls use it
+# ---------------------------------------------------------------------------
 source "/opt/hermes/.venv/bin/activate"
 
 # ---------------------------------------------------------------------------
@@ -41,31 +43,20 @@ env | grep -E "^(OPENROUTER_API_KEY|TELEGRAM_BOT_TOKEN|TELEGRAM_ALLOWED_USERS|TE
 
 # ---------------------------------------------------------------------------
 # Bootstrap config.yaml — set model, provider, and terminal settings
+# Pure-bash heredoc: no Python yaml import needed, avoids venv dependency issues.
+# On subsequent runs, Hermes manages its own config.yaml — we only write once.
 # ---------------------------------------------------------------------------
-echo "[bootstrap] Configuring Hermes v0.9 (model: ${LLM_MODEL:-arcee-ai/trinity-large-thinking})..."
+_MODEL="${LLM_MODEL:-arcee-ai/trinity-large-thinking}"
+_PROVIDER="${HERMES_INFERENCE_PROVIDER:-openrouter}"
 
-if [[ -f "${CONFIG_FILE}" ]]; then
-    # Update model.default in-place using Python (preserves all other user settings)
-    python3 - <<PYEOF
-import yaml, os
-cfg_path = os.environ['CONFIG_FILE']
-with open(cfg_path) as f:
-    cfg = yaml.safe_load(f) or {}
-if 'model' not in cfg:
-    cfg['model'] = {}
-cfg['model']['default'] = os.environ.get('LLM_MODEL', 'arcee-ai/trinity-large-thinking')
-cfg['model']['provider'] = os.environ.get('HERMES_INFERENCE_PROVIDER', 'openrouter')
-cfg['model']['base_url'] = 'https://openrouter.ai/api/v1'
-with open(cfg_path, 'w') as f:
-    yaml.dump(cfg, f, default_flow_style=False, allow_unicode=True)
-print(f"[config-fix] Set model={cfg['model']['default']}")
-PYEOF
-else
-    # First run — write a clean config
-    cat > "${CONFIG_FILE}" <<EOC
+echo "[bootstrap] Configuring Hermes v0.9 (model: ${_MODEL}, provider: ${_PROVIDER})..."
+
+if [[ ! -f "${CONFIG_FILE}" ]]; then
+    # First run — write a clean config using bash heredoc (no yaml module needed)
+    cat > "${CONFIG_FILE}" << EOC
 model:
-  default: "${LLM_MODEL:-arcee-ai/trinity-large-thinking}"
-  provider: "${HERMES_INFERENCE_PROVIDER:-openrouter}"
+  default: "${_MODEL}"
+  provider: "${_PROVIDER}"
   base_url: "https://openrouter.ai/api/v1"
 
 terminal:
@@ -77,7 +68,20 @@ compression:
   enabled: true
   threshold: 0.85
 EOC
-    echo "[config-fix] Set model=${LLM_MODEL:-arcee-ai/trinity-large-thinking}"
+    echo "[bootstrap] config.yaml created with model=${_MODEL}"
+else
+    # Config already exists from a previous deploy — patch model.default in-place
+    # using sed so we don't need pyyaml and don't clobber user customisations.
+    if grep -q "^  default:" "${CONFIG_FILE}"; then
+        sed -i "s|^  default:.*|  default: \"${_MODEL}\"|" "${CONFIG_FILE}"
+    else
+        # model section exists but no default key — append it
+        sed -i "/^model:/a\\  default: \"${_MODEL}\"" "${CONFIG_FILE}"
+    fi
+    if grep -q "^  provider:" "${CONFIG_FILE}"; then
+        sed -i "s|^  provider:.*|  provider: \"${_PROVIDER}\"|" "${CONFIG_FILE}"
+    fi
+    echo "[bootstrap] config.yaml updated: model=${_MODEL}"
 fi
 
 # ---------------------------------------------------------------------------
