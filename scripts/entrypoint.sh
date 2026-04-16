@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Hermes Agent Railway Entrypoint — v0.9.0
 # Starts the Web Dashboard on Railway's public PORT and the gateway in background.
+# CACHE_BUST: 20260416-3
 set -euo pipefail
 
 export HERMES_HOME="${HERMES_HOME:-/data/.hermes}"
@@ -43,8 +44,7 @@ env | grep -E "^(OPENROUTER_API_KEY|TELEGRAM_BOT_TOKEN|TELEGRAM_ALLOWED_USERS|TE
 
 # ---------------------------------------------------------------------------
 # Bootstrap config.yaml — set model, provider, and terminal settings
-# Pure-bash heredoc: no Python yaml import needed, avoids venv dependency issues.
-# On subsequent runs, Hermes manages its own config.yaml — we only write once.
+# Pure-bash heredoc: no Python yaml import needed.
 # ---------------------------------------------------------------------------
 _MODEL="${LLM_MODEL:-arcee-ai/trinity-large-thinking}"
 _PROVIDER="${HERMES_INFERENCE_PROVIDER:-openrouter}"
@@ -70,12 +70,10 @@ compression:
 EOC
     echo "[bootstrap] config.yaml created with model=${_MODEL}"
 else
-    # Config already exists from a previous deploy — patch model.default in-place
-    # using sed so we don't need pyyaml and don't clobber user customisations.
+    # Config already exists — patch model.default in-place using sed
     if grep -q "^  default:" "${CONFIG_FILE}"; then
         sed -i "s|^  default:.*|  default: \"${_MODEL}\"|" "${CONFIG_FILE}"
     else
-        # model section exists but no default key — append it
         sed -i "/^model:/a\\  default: \"${_MODEL}\"" "${CONFIG_FILE}"
     fi
     if grep -q "^  provider:" "${CONFIG_FILE}"; then
@@ -96,17 +94,33 @@ fi
 
 # ---------------------------------------------------------------------------
 # Start the Web Dashboard on Railway's public PORT
-# The dashboard serves the Vite/React SPA + REST API for config management.
-# Railway routes external HTTPS traffic to $PORT (default 8080).
+#
+# We call uvicorn directly on hermes_cli.web_server:app rather than
+# 'hermes dashboard' — this bypasses the _build_web_ui() npm check that
+# runs at startup and would delay binding past Railway's 60s health check.
+# The web_dist/ was already built during the Docker build step.
 # ---------------------------------------------------------------------------
 DASHBOARD_PORT="${PORT:-8080}"
+HERMES_MODULE_DIR="/opt/hermes"
+
 echo "[bootstrap] Starting Hermes Web Dashboard on 0.0.0.0:${DASHBOARD_PORT}..."
-hermes dashboard --host 0.0.0.0 --port "${DASHBOARD_PORT}" --no-open &
+cd "${HERMES_MODULE_DIR}"
+python -m uvicorn hermes_cli.web_server:app \
+    --host 0.0.0.0 \
+    --port "${DASHBOARD_PORT}" \
+    --log-level warning &
 DASHBOARD_PID=$!
 echo "[bootstrap] Dashboard PID: ${DASHBOARD_PID}"
 
 # Give the dashboard a moment to bind before starting the gateway
-sleep 2
+sleep 3
+
+# Verify dashboard is up
+if kill -0 "${DASHBOARD_PID}" 2>/dev/null; then
+    echo "[bootstrap] Dashboard is running."
+else
+    echo "[bootstrap] WARNING: Dashboard process exited early."
+fi
 
 # ---------------------------------------------------------------------------
 # Start the Hermes Gateway (Telegram + cron scheduler) in the foreground.
