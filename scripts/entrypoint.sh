@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Hermes Agent Railway Entrypoint — v0.9.0
 # Starts the Web Dashboard on Railway's public PORT and the gateway in background.
-# CACHE_BUST: 20260416-6
+# CACHE_BUST: 20260416-7
 set -euo pipefail
 
 export HERMES_HOME="${HERMES_HOME:-/data/.hermes}"
@@ -29,8 +29,32 @@ mkdir -p \
 source "/opt/hermes/.venv/bin/activate"
 
 # ---------------------------------------------------------------------------
+# Remove the open-brain-monitoring skill if it exists on the volume.
+# This skill uses the legacy 'from hermes_tools import ...' API that no
+# longer exists in Hermes v0.9.0. It causes crash loops every 30 minutes
+# AND corrupts config.yaml via save_config() calls during failed sessions.
+# ---------------------------------------------------------------------------
+OBM_SKILL="${HERMES_HOME}/skills/open-brain-monitoring"
+if [[ -d "${OBM_SKILL}" ]]; then
+    echo "[bootstrap] Removing stale open-brain-monitoring skill (incompatible with v0.9.0)..."
+    rm -rf "${OBM_SKILL}"
+fi
+
+# Also remove any cron jobs that reference open-brain-monitoring
+if [[ -d "${HERMES_HOME}/cron" ]]; then
+    find "${HERMES_HOME}/cron" -type f -name "*.yaml" -o -name "*.json" 2>/dev/null | while read -r cronfile; do
+        if grep -q "open-brain-monitoring\|open_brain_monitoring\|hermes_tools" "${cronfile}" 2>/dev/null; then
+            echo "[bootstrap] Removing stale cron job: ${cronfile}"
+            rm -f "${cronfile}"
+        fi
+    done
+fi
+
+# ---------------------------------------------------------------------------
 # Bootstrap .env — write runtime secrets into HERMES_HOME/.env
-# This file is read by hermes gateway at startup.
+# NOTE: Do NOT include LLM_MODEL here — Hermes v0.9.0 treats it as a dead
+# variable and DELETES it from .env during config migration (v12→v13).
+# Model is set exclusively via config.yaml model.default below.
 # ---------------------------------------------------------------------------
 echo "[bootstrap] Writing runtime env to ${ENV_FILE}"
 {
@@ -39,24 +63,38 @@ echo "[bootstrap] Writing runtime env to ${ENV_FILE}"
     echo "MESSAGING_CWD=${MESSAGING_CWD}"
 } > "${ENV_FILE}"
 
-# Append all relevant env vars (Telegram, OpenRouter, etc.)
-env | grep -E "^(OPENROUTER_API_KEY|TELEGRAM_BOT_TOKEN|TELEGRAM_ALLOWED_USERS|TELEGRAM_HOME_CHANNEL|LLM_MODEL|HERMES_INFERENCE_PROVIDER|ADMIN_PASSWORD)" >> "${ENV_FILE}" || true
+# Append secrets — deliberately EXCLUDE LLM_MODEL (dead var in v0.9.0)
+env | grep -E "^(OPENROUTER_API_KEY|TELEGRAM_BOT_TOKEN|TELEGRAM_ALLOWED_USERS|TELEGRAM_HOME_CHANNEL|ADMIN_PASSWORD)" >> "${ENV_FILE}" || true
 
 # ---------------------------------------------------------------------------
-# Bootstrap config.yaml — ALWAYS rewrite on startup to guarantee correct
-# model and provider are set. This prevents stale/corrupt config from a
-# previous deployment on the /data volume from causing "No models provided"
-# errors or other LLM call failures.
+# Bootstrap config.yaml — ALWAYS delete and rewrite on startup.
+#
+# Why always delete (not just overwrite):
+#   - The /data volume may have a corrupt config.yaml from a previous failed
+#     deployment (YAML parse error at line 146).
+#   - Hermes calls save_config() during sessions, which can re-corrupt the
+#     file if it merges in-memory state with a bad base.
+#   - Deleting ensures a clean 100% known-good file every boot.
+#
+# Key settings:
+#   - model.default: the model name passed to OpenRouter
+#   - model.provider: must be "openrouter" (not "auto") for arcee-ai/ models
+#   - _config_version: 17 — matches DEFAULT_CONFIG version, prevents migration
+#     from running and potentially clearing our settings
 # ---------------------------------------------------------------------------
 _MODEL="${LLM_MODEL:-arcee-ai/trinity-large-thinking}"
 _PROVIDER="${HERMES_INFERENCE_PROVIDER:-openrouter}"
 
 echo "[bootstrap] Writing config.yaml: model=${_MODEL}, provider=${_PROVIDER}"
 
-# Write a clean config.yaml — matches the exact format from cli-config.yaml.example
+# Always delete first to avoid any stale/corrupt content
+rm -f "${CONFIG_FILE}"
+
 cat > "${CONFIG_FILE}" << EOC
 # Hermes Agent config — managed by Railway entrypoint.sh
-# Do not edit manually; changes will be overwritten on restart.
+# Deleted and rewritten on every restart to ensure correctness.
+_config_version: 17
+
 model:
   default: "${_MODEL}"
   provider: "${_PROVIDER}"
@@ -72,7 +110,8 @@ compression:
   threshold: 0.85
 EOC
 
-echo "[bootstrap] config.yaml written successfully."
+echo "[bootstrap] config.yaml written ($(wc -l < "${CONFIG_FILE}") lines)."
+echo "[bootstrap] Model config: $(grep 'default:' "${CONFIG_FILE}")"
 
 # ---------------------------------------------------------------------------
 # Start the Web Dashboard on Railway's public PORT
