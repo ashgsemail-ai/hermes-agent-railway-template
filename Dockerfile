@@ -1,25 +1,49 @@
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+# Hermes Agent Railway Template — v0.9.0
+# Pinned to v2026.4.13 (Hermes v0.9.0) with Web Dashboard enabled
+FROM ghcr.io/astral-sh/uv:0.11.6-python3.13-trixie AS uv_source
 
+FROM debian:13.4
+
+ENV PYTHONUNBUFFERED=1
+ENV HERMES_HOME=/data/.hermes
+ENV HOME=/data
+ENV MESSAGING_CWD=/data/workspace
+
+# System dependencies: nodejs/npm required for the web UI build step
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl ca-certificates git && \
+    apt-get install -y --no-install-recommends \
+        build-essential nodejs npm python3 ripgrep ffmpeg gcc python3-dev \
+        libffi-dev procps git ca-certificates tini && \
     rm -rf /var/lib/apt/lists/*
 
-RUN git clone --depth 1 https://github.com/NousResearch/hermes-agent.git /tmp/hermes-agent && \
-    cd /tmp/hermes-agent && \
-    uv pip install --system --no-cache -e ".[all]" && \
-    rm -rf /tmp/hermes-agent/.git
+COPY --from=uv_source /usr/local/bin/uv /usr/local/bin/uvx /usr/local/bin/
 
-COPY requirements.txt /app/requirements.txt
-RUN uv pip install --system --no-cache -r /app/requirements.txt
+WORKDIR /opt/hermes
 
-RUN mkdir -p /data/.hermes
+# Pin to Hermes v0.9.0 (tag v2026.4.13)
+ARG HERMES_GIT_REF=v2026.4.13
 
-COPY server.py /app/server.py
-COPY templates/ /app/templates/
-COPY start.sh /app/start.sh
-RUN chmod +x /app/start.sh
+RUN git clone --depth 1 --branch "${HERMES_GIT_REF}" \
+        https://github.com/NousResearch/hermes-agent.git .
 
-ENV HOME=/data
-ENV HERMES_HOME=/data/.hermes
+# Build the Vite/React web dashboard frontend → hermes_cli/web_dist/
+RUN cd web && npm install --prefer-offline --no-audit && npm run build
 
-CMD ["/app/start.sh"]
+# Install Python deps including [web] extras (fastapi + uvicorn for dashboard)
+RUN uv venv && \
+    uv pip install --no-cache-dir -e ".[messaging,cron,cli,pty,web]"
+
+# Patch CORS: extend the localhost-only regex to also accept any origin
+# so the Railway public domain can reach the dashboard API.
+RUN sed -i \
+    's|allow_origin_regex=r".*"|allow_origins=["*"]|g' \
+    /opt/hermes/hermes_cli/web_server.py && \
+    echo "CORS patch applied:" && \
+    grep -n "allow_origin" /opt/hermes/hermes_cli/web_server.py | head -5
+
+COPY scripts/entrypoint.sh /opt/hermes/scripts/entrypoint.sh
+RUN chmod +x /opt/hermes/scripts/entrypoint.sh
+
+VOLUME [ "/data" ]
+ENTRYPOINT ["tini", "--"]
+CMD ["/opt/hermes/scripts/entrypoint.sh"]

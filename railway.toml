@@ -1,9 +1,15 @@
 [build]
-builder = "DOCKERFILE"
-dockerfilePath = "Dockerfile"
+builder = "dockerfile"
 
 [deploy]
-startCommand = "/app/start.sh"
-healthcheckPath = "/health"
-restartPolicyType = "ON_FAILURE"
-restartPolicyMaxRetries = 10
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 5
+requiredMountPath = "/data"
+# Health check: Railway pings / on the dashboard port to confirm the container is up
+healthcheckPath = "/"
+healthcheckTimeout = 60
+
+[variables]
+HERMES_HOME = "/data/.hermes"
+HOME = "/data"
+MESSAGING_CWD = "/data/workspace"
