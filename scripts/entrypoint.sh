@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 # Hermes Agent Railway Entrypoint — v0.9.0
 # Starts the Web Dashboard on Railway's public PORT and the gateway in background.
-# CACHE_BUST: 20260416-5
+# CACHE_BUST: 20260416-6
 set -euo pipefail
 
 export HERMES_HOME="${HERMES_HOME:-/data/.hermes}"
 export HOME="${HOME:-/data}"
 export MESSAGING_CWD="${MESSAGING_CWD:-/data/workspace}"
 
-INIT_MARKER="${HERMES_HOME}/.initialized"
 ENV_FILE="${HERMES_HOME}/.env"
 CONFIG_FILE="${HERMES_HOME}/config.yaml"
 
@@ -31,6 +30,7 @@ source "/opt/hermes/.venv/bin/activate"
 
 # ---------------------------------------------------------------------------
 # Bootstrap .env — write runtime secrets into HERMES_HOME/.env
+# This file is read by hermes gateway at startup.
 # ---------------------------------------------------------------------------
 echo "[bootstrap] Writing runtime env to ${ENV_FILE}"
 {
@@ -43,27 +43,20 @@ echo "[bootstrap] Writing runtime env to ${ENV_FILE}"
 env | grep -E "^(OPENROUTER_API_KEY|TELEGRAM_BOT_TOKEN|TELEGRAM_ALLOWED_USERS|TELEGRAM_HOME_CHANNEL|LLM_MODEL|HERMES_INFERENCE_PROVIDER|ADMIN_PASSWORD)" >> "${ENV_FILE}" || true
 
 # ---------------------------------------------------------------------------
-# Bootstrap config.yaml — set model, provider, and terminal settings
-# Pure-bash heredoc: no Python yaml import needed.
-# If an existing config.yaml is corrupt (YAML parse error), wipe it so we
-# write a clean one — prevents the gateway from logging warnings every cycle.
+# Bootstrap config.yaml — ALWAYS rewrite on startup to guarantee correct
+# model and provider are set. This prevents stale/corrupt config from a
+# previous deployment on the /data volume from causing "No models provided"
+# errors or other LLM call failures.
 # ---------------------------------------------------------------------------
 _MODEL="${LLM_MODEL:-arcee-ai/trinity-large-thinking}"
 _PROVIDER="${HERMES_INFERENCE_PROVIDER:-openrouter}"
 
-echo "[bootstrap] Configuring Hermes v0.9 (model: ${_MODEL}, provider: ${_PROVIDER})..."
+echo "[bootstrap] Writing config.yaml: model=${_MODEL}, provider=${_PROVIDER}"
 
-# Validate existing config — wipe if corrupt
-if [[ -f "${CONFIG_FILE}" ]]; then
-    if ! python -c "import yaml; yaml.safe_load(open('${CONFIG_FILE}'))" 2>/dev/null; then
-        echo "[bootstrap] WARNING: config.yaml is corrupt — removing and rewriting cleanly."
-        rm -f "${CONFIG_FILE}"
-    fi
-fi
-
-if [[ ! -f "${CONFIG_FILE}" ]]; then
-    # First run (or after wiping corrupt config) — write a clean config
-    cat > "${CONFIG_FILE}" << EOC
+# Write a clean config.yaml — matches the exact format from cli-config.yaml.example
+cat > "${CONFIG_FILE}" << EOC
+# Hermes Agent config — managed by Railway entrypoint.sh
+# Do not edit manually; changes will be overwritten on restart.
 model:
   default: "${_MODEL}"
   provider: "${_PROVIDER}"
@@ -78,29 +71,8 @@ compression:
   enabled: true
   threshold: 0.85
 EOC
-    echo "[bootstrap] config.yaml created with model=${_MODEL}"
-else
-    # Config exists and is valid — patch model.default in-place using sed
-    if grep -q "^  default:" "${CONFIG_FILE}"; then
-        sed -i "s|^  default:.*|  default: \"${_MODEL}\"|" "${CONFIG_FILE}"
-    else
-        sed -i "/^model:/a\\  default: \"${_MODEL}\"" "${CONFIG_FILE}"
-    fi
-    if grep -q "^  provider:" "${CONFIG_FILE}"; then
-        sed -i "s|^  provider:.*|  provider: \"${_PROVIDER}\"|" "${CONFIG_FILE}"
-    fi
-    echo "[bootstrap] config.yaml updated: model=${_MODEL}"
-fi
 
-# ---------------------------------------------------------------------------
-# First-time initialization marker
-# ---------------------------------------------------------------------------
-if [[ ! -f "${INIT_MARKER}" ]]; then
-    date -u +"%Y-%m-%dT%H:%M:%SZ" > "${INIT_MARKER}"
-    echo "[bootstrap] First-time initialization completed."
-else
-    echo "[bootstrap] Existing Hermes data found. Skipping one-time init."
-fi
+echo "[bootstrap] config.yaml written successfully."
 
 # ---------------------------------------------------------------------------
 # Start the Web Dashboard on Railway's public PORT
