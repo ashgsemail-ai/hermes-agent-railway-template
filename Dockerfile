@@ -44,6 +44,6 @@ RUN sed -i \
 COPY scripts/entrypoint.sh /opt/hermes/scripts/entrypoint.sh
 RUN chmod +x /opt/hermes/scripts/entrypoint.sh
 
-VOLUME [ "/data" ]
+# Note: Railway volumes are configured via Railway dashboard/API, not VOLUME directive
 ENTRYPOINT ["tini", "--"]
 CMD ["/opt/hermes/scripts/entrypoint.sh"]
