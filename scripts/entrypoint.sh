@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Hermes Agent Railway Entrypoint — v0.9.0
 # Starts the Web Dashboard on Railway's public PORT and the gateway in background.
-# CACHE_BUST: 20260416-3
+# CACHE_BUST: 20260416-5
 set -euo pipefail
 
 export HERMES_HOME="${HERMES_HOME:-/data/.hermes}"
@@ -45,14 +45,24 @@ env | grep -E "^(OPENROUTER_API_KEY|TELEGRAM_BOT_TOKEN|TELEGRAM_ALLOWED_USERS|TE
 # ---------------------------------------------------------------------------
 # Bootstrap config.yaml — set model, provider, and terminal settings
 # Pure-bash heredoc: no Python yaml import needed.
+# If an existing config.yaml is corrupt (YAML parse error), wipe it so we
+# write a clean one — prevents the gateway from logging warnings every cycle.
 # ---------------------------------------------------------------------------
 _MODEL="${LLM_MODEL:-arcee-ai/trinity-large-thinking}"
 _PROVIDER="${HERMES_INFERENCE_PROVIDER:-openrouter}"
 
 echo "[bootstrap] Configuring Hermes v0.9 (model: ${_MODEL}, provider: ${_PROVIDER})..."
 
+# Validate existing config — wipe if corrupt
+if [[ -f "${CONFIG_FILE}" ]]; then
+    if ! python -c "import yaml; yaml.safe_load(open('${CONFIG_FILE}'))" 2>/dev/null; then
+        echo "[bootstrap] WARNING: config.yaml is corrupt — removing and rewriting cleanly."
+        rm -f "${CONFIG_FILE}"
+    fi
+fi
+
 if [[ ! -f "${CONFIG_FILE}" ]]; then
-    # First run — write a clean config using bash heredoc (no yaml module needed)
+    # First run (or after wiping corrupt config) — write a clean config
     cat > "${CONFIG_FILE}" << EOC
 model:
   default: "${_MODEL}"
@@ -70,7 +80,7 @@ compression:
 EOC
     echo "[bootstrap] config.yaml created with model=${_MODEL}"
 else
-    # Config already exists — patch model.default in-place using sed
+    # Config exists and is valid — patch model.default in-place using sed
     if grep -q "^  default:" "${CONFIG_FILE}"; then
         sed -i "s|^  default:.*|  default: \"${_MODEL}\"|" "${CONFIG_FILE}"
     else
