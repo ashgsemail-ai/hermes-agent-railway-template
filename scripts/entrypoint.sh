@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Hermes Agent Railway Entrypoint — v0.9.0
 # Starts the Web Dashboard on Railway's public PORT and the gateway in background.
-# CACHE_BUST: 20260416-10
+# CACHE_BUST: 20260416-11
 set -euo pipefail
 
 export HERMES_HOME="${HERMES_HOME:-/data/.hermes}"
@@ -65,6 +65,26 @@ echo "[bootstrap] Writing runtime env to ${ENV_FILE}"
 
 # Append secrets — deliberately EXCLUDE LLM_MODEL (dead var in v0.9.0)
 env | grep -E "^(OPENROUTER_API_KEY|TELEGRAM_BOT_TOKEN|TELEGRAM_ALLOWED_USERS|TELEGRAM_HOME_CHANNEL|ADMIN_PASSWORD)" >> "${ENV_FILE}" || true
+
+# ---------------------------------------------------------------------------
+# API Server configuration
+#
+# The Hermes aiohttp API server provides an OpenAI-compatible HTTP API
+# (/v1/chat/completions, /v1/runs, etc.) that allows programmatic access.
+# It runs on port 8642 (internal) and is proxied through the dashboard.
+#
+# To enable: set API_SERVER_ENABLED=true and API_SERVER_KEY=<secret> in
+# Railway environment variables.
+# ---------------------------------------------------------------------------
+_API_KEY="${API_SERVER_KEY:-}"
+if [[ -n "${_API_KEY}" ]]; then
+    export API_SERVER_ENABLED=true
+    export API_SERVER_HOST=127.0.0.1
+    export API_SERVER_PORT=8642
+    echo "[bootstrap] API server enabled on 127.0.0.1:8642 (proxied via dashboard)"
+else
+    echo "[bootstrap] API server disabled (set API_SERVER_KEY to enable)"
+fi
 
 # ---------------------------------------------------------------------------
 # Bootstrap config.yaml — ALWAYS delete and rewrite on startup.

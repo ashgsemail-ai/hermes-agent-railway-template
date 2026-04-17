@@ -91,16 +91,15 @@ RUN uv venv && \
 RUN ln -sf /opt/hermes/.venv/bin/pip  /usr/local/bin/pip-hermes && \
     ln -sf /opt/hermes/.venv/bin/pip3 /usr/local/bin/pip3-hermes
 
-# Patch CORS: allow all origins so Railway's public domain can reach the API.
-# The default only allows localhost; we open it up for Railway deployment.
-RUN sed -i \
-    's|allow_origin_regex=r".*"|allow_origins=["*"]|g' \
-    /opt/hermes/hermes_cli/web_server.py && \
-    echo "CORS patch applied:" && \
-    grep -n "allow_origin" /opt/hermes/hermes_cli/web_server.py | head -5
-
 # Cache-bust: increment to force Railway to rebuild from this layer onward
-ARG CACHE_BUST=v10
+ARG CACHE_BUST=v11
+
+# Apply web_server.py patches:
+#   1. CORS: allow all origins (Railway public domain needs this)
+#   2. Add /v1/* reverse-proxy routes → Hermes aiohttp API server (port 8642)
+#      This exposes the OpenAI-compatible API through the single Railway port.
+COPY scripts/patch_web_server.py /tmp/patch_web_server.py
+RUN python3 /tmp/patch_web_server.py && rm /tmp/patch_web_server.py
 
 COPY scripts/entrypoint.sh /opt/hermes/scripts/entrypoint.sh
 RUN chmod +x /opt/hermes/scripts/entrypoint.sh
