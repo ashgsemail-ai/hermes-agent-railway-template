@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Hermes Agent Railway Entrypoint — v0.9.0
 # Starts the Web Dashboard on Railway's public PORT and the gateway in background.
-# CACHE_BUST: 20260416-9
+# CACHE_BUST: 20260416-10
 set -euo pipefail
 
 export HERMES_HOME="${HERMES_HOME:-/data/.hermes}"

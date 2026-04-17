@@ -74,9 +74,17 @@ RUN git clone --depth 1 --branch "${HERMES_GIT_REF}" \
 # (vite.config.ts sets outDir: "../hermes_cli/web_dist")
 RUN cd web && npm install --prefer-offline --no-audit && npm run build
 
-# Install Python deps including [web] extras (fastapi + uvicorn for dashboard)
+# Install Python deps:
+#   messaging  — Telegram, Discord, Slack, WhatsApp, etc.
+#   cron       — scheduled tasks
+#   cli        — interactive CLI (simple-term-menu)
+#   pty        — PTY/interactive terminal support
+#   web        — FastAPI + uvicorn for the web dashboard
+#   voice      — faster-whisper (local STT), sounddevice, numpy
+#                faster-whisper pulls in ctranslate2 + onnxruntime (wheel-only,
+#                no extra system libs needed beyond what's already installed)
 RUN uv venv && \
-    uv pip install --no-cache-dir -e ".[messaging,cron,cli,pty,web]"
+    uv pip install --no-cache-dir -e ".[messaging,cron,cli,pty,web,voice]"
 
 # Make the venv's pip/pip3 globally accessible so Hermes can install
 # packages at runtime without knowing the venv path.
@@ -92,7 +100,7 @@ RUN sed -i \
     grep -n "allow_origin" /opt/hermes/hermes_cli/web_server.py | head -5
 
 # Cache-bust: increment to force Railway to rebuild from this layer onward
-ARG CACHE_BUST=v9
+ARG CACHE_BUST=v10
 
 COPY scripts/entrypoint.sh /opt/hermes/scripts/entrypoint.sh
 RUN chmod +x /opt/hermes/scripts/entrypoint.sh
